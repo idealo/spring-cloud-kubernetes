@@ -83,8 +83,7 @@ public class KubernetesDiscoveryClient implements DiscoveryClient {
 					s.getPorts().stream().findFirst().orElseThrow(IllegalStateException::new),
 					endpoints.getMetadata().getAnnotations(), false))
 				.findFirst().orElse(defaultInstance);
-		} catch (Throwable ignored) {
-		}
+		} catch (Throwable ignored) { }
 
 		return defaultInstance;
 	}
