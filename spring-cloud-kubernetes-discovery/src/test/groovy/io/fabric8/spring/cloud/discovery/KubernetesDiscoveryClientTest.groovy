@@ -1,6 +1,7 @@
 package org.springframework.cloud.kubernetes.discovery
 
 import io.fabric8.kubernetes.api.model.EndpointsBuilder
+import io.fabric8.kubernetes.api.model.EndpointsListBuilder
 import io.fabric8.kubernetes.client.Config
 import io.fabric8.kubernetes.client.KubernetesClient
 import io.fabric8.kubernetes.server.mock.KubernetesMockServer
@@ -30,18 +31,24 @@ class KubernetesDiscoveryClientTest extends Specification {
     }
 
     def "Should be able to handle endpoints single address"() {
-        given:
-        mockServer.expect().get().withPath("/api/v1/namespaces/test/endpoints/endpoint").andReturn(200, new EndpointsBuilder()
-                .withNewMetadata()
-                    .withName("endpoint")
-                .endMetadata()
-                .addNewSubset()
-                    .addNewAddress()
-                        .withIp("ip1")
-                    .endAddress()
-                    .addNewPort("http",80,"TCP")
-                .endSubset()
-                .build()).once()
+		def endpoints = new EndpointsBuilder()
+            .withNewMetadata()
+            .withName("endpoint")
+            .endMetadata()
+            .addNewSubset()
+            .addNewAddress()
+            .withIp("ip1")
+            .endAddress()
+            .addNewPort("http", 80, "TCP")
+            .endSubset()
+            .build()
+
+		def endpointsList = new EndpointsListBuilder()
+			.withItems(endpoints)
+			.build()
+		given:
+
+        mockServer.expect().get().withPath("/api/v1/namespaces/test/endpoints?fieldSelector=metadata.name%3Dendpoint").andReturn(200, endpointsList).once()
 
         DiscoveryClient discoveryClient = new KubernetesDiscoveryClient(mockClient, new KubernetesDiscoveryProperties())
         when:
@@ -52,24 +59,28 @@ class KubernetesDiscoveryClientTest extends Specification {
         instances.find({s -> s.host == "ip1"})
     }
 
-
-
     def "Should be able to handle endpoints multiple addresses"() {
-        given:
-        mockServer.expect().get().withPath("/api/v1/namespaces/test/endpoints/endpoint").andReturn(200, new EndpointsBuilder()
-                .withNewMetadata()
-                    .withName("endpoint")
-                .endMetadata()
-                .addNewSubset()
-                    .addNewAddress()
-                        .withIp("ip1")
-                    .endAddress()
-                    .addNewAddress()
-                        .withIp("ip2")
-                    .endAddress()
-                    .addNewPort("http",80,"TCP")
-                .endSubset()
-                .build()).once()
+		def endpoints = new EndpointsBuilder()
+            .withNewMetadata()
+            .withName("endpoint")
+            .endMetadata()
+            .addNewSubset()
+            .addNewAddress()
+            .withIp("ip1")
+            .endAddress()
+            .addNewAddress()
+            .withIp("ip2")
+            .endAddress()
+            .addNewPort("http", 80, "TCP")
+            .endSubset()
+            .build()
+
+		def endpointsList = new EndpointsListBuilder()
+			.withItems(endpoints)
+			.build()
+
+		given:
+        mockServer.expect().get().withPath("/api/v1/namespaces/test/endpoints?fieldSelector=metadata.name%3Dendpoint").andReturn(200, endpointsList).once()
 
         DiscoveryClient discoveryClient = new KubernetesDiscoveryClient(mockClient, new KubernetesDiscoveryProperties())
         when:
@@ -79,6 +90,5 @@ class KubernetesDiscoveryClientTest extends Specification {
         instances.size() == 2
         instances.find({s -> s.host == "ip1"})
         instances.find({s -> s.host == "ip2"})
-
     }
 }

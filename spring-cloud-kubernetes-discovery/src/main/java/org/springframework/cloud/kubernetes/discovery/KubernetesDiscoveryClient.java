@@ -16,16 +16,8 @@
 
 package org.springframework.cloud.kubernetes.discovery;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.stream.Collectors;
-
-import io.fabric8.kubernetes.api.model.EndpointAddress;
-import io.fabric8.kubernetes.api.model.EndpointSubset;
 import io.fabric8.kubernetes.api.model.Endpoints;
-import io.fabric8.kubernetes.api.model.Service;
+import io.fabric8.kubernetes.api.model.EndpointsList;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.utils.Utils;
 import org.apache.commons.logging.Log;
@@ -34,11 +26,17 @@ import org.springframework.cloud.client.DefaultServiceInstance;
 import org.springframework.cloud.client.ServiceInstance;
 import org.springframework.cloud.client.discovery.DiscoveryClient;
 import org.springframework.util.Assert;
+import org.springframework.util.CollectionUtils;
+
+import java.util.List;
+import java.util.stream.Collectors;
 
 public class KubernetesDiscoveryClient implements DiscoveryClient {
 
 	private static final Log log = LogFactory.getLog(KubernetesDiscoveryClient.class);
+
 	private static final String HOSTNAME = "HOSTNAME";
+	private static final String METADATA_FIELD_NAME = "metadata.name";
 
 	private KubernetesClient client;
 	private KubernetesDiscoveryProperties properties;
@@ -62,76 +60,48 @@ public class KubernetesDiscoveryClient implements DiscoveryClient {
 		return "Kubernetes Discovery Client";
 	}
 
+
 	public ServiceInstance getLocalServiceInstance() {
 		String serviceName = properties.getServiceName();
 		String podName = System.getenv(HOSTNAME);
-		ServiceInstance defaultInstance = new DefaultServiceInstance(serviceName,
-																	 "localhost",
-																	 8080,
-																	 false);
 
-		Endpoints endpoints = client.endpoints().withName(serviceName).get();
-		Optional<Service> service = Optional.ofNullable(client.services().withName(serviceName).get());
-		final Map<String, String> annotations;
-		if (service.isPresent()) {
-			annotations = service.get().getMetadata().getAnnotations();
-		} else {
-			annotations = null;
-		}
+		ServiceInstance defaultInstance = new DefaultServiceInstance(serviceName, "localhost", 8080,
+			false);
+
+		Endpoints endpoints = getServiceEndpoints(serviceName);
 		if (Utils.isNullOrEmpty(podName) || endpoints == null) {
 			return defaultInstance;
 		}
+
 		try {
-			List<EndpointSubset> subsets = endpoints.getSubsets();
-
-			if (subsets != null) {
-				for (EndpointSubset s : subsets) {
-					List<EndpointAddress> addresses = s.getAddresses();
-					for (EndpointAddress a : addresses) {
-						return new KubernetesServiceInstance(serviceName,
-																	a,
-																	s.getPorts().stream().findFirst().orElseThrow(IllegalStateException::new),
-																	annotations,
-																	false);
-					}
-				}
-			}
-			return defaultInstance;
-
-		} catch (Throwable t) {
-			return defaultInstance;
+			return endpoints
+				.getSubsets()
+				.stream()
+				.filter(s -> s.getAddresses().get(0).getTargetRef().getName().equals(podName))
+				.map(s -> (ServiceInstance) new KubernetesServiceInstance(serviceName,
+					s.getAddresses().stream().findFirst().orElseThrow(IllegalStateException::new),
+					s.getPorts().stream().findFirst().orElseThrow(IllegalStateException::new),
+					endpoints.getMetadata().getAnnotations(), false))
+				.findFirst().orElse(defaultInstance);
+		} catch (Throwable ignored) {
 		}
+
+		return defaultInstance;
 	}
 
 	@Override
 	public List<ServiceInstance> getInstances(String serviceId) {
-		Assert.notNull(serviceId,
-					   "[Assertion failed] - the object argument must be null");
-		Optional<Service> service = Optional.ofNullable(client.services().withName(serviceId).get());
-		final Map<String, String> labels;
-		if (service.isPresent()) {
-			labels = service.get().getMetadata().getLabels();
-		} else {
-			labels = null;
-		}
+		Assert.notNull(serviceId, "[Assertion failed] - the object argument must be null");
+		Endpoints endpoints = getServiceEndpoints(serviceId);
 
-		Optional<Endpoints> endpoints = Optional.ofNullable(client.endpoints().withName(serviceId).get());
-		List<EndpointSubset> subsets = endpoints.get().getSubsets();
-		List<ServiceInstance> instances = new ArrayList<>();
-		if (subsets != null) {
-			for (EndpointSubset s : subsets) {
-				List<EndpointAddress> addresses = s.getAddresses();
-				for (EndpointAddress a : addresses) {
-					instances.add(new KubernetesServiceInstance(serviceId,
-																a,
-																s.getPorts().stream().findFirst().orElseThrow(IllegalStateException::new),
-																labels,
-																false));
-				}
-			}
-		}
-
-		return instances;
+		return endpoints
+			.getSubsets()
+			.stream()
+			.flatMap(s -> s.getAddresses().stream().map(
+				a -> (ServiceInstance) new KubernetesServiceInstance(serviceId, a,
+					s.getPorts().stream().findFirst().orElseThrow(IllegalStateException::new),
+					endpoints.getMetadata().getAnnotations(), false)))
+			.collect(Collectors.toList());
 	}
 
 	@Override
@@ -140,5 +110,17 @@ public class KubernetesDiscoveryClient implements DiscoveryClient {
 			.getItems()
 			.stream().map(s -> s.getMetadata().getName())
 			.collect(Collectors.toList());
+	}
+
+	private Endpoints getServiceEndpoints(String serviceId) {
+		EndpointsList list = client.endpoints()
+			.withField(METADATA_FIELD_NAME, serviceId)
+			.list();
+
+		if (null != list && !CollectionUtils.isEmpty(list.getItems())) {
+			return list.getItems().get(0);
+		}
+
+		return new Endpoints();
 	}
 }
